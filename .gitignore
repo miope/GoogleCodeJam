@@ -1,0 +1,17 @@
+inputs/
+lib/
+data/
+[Oo]bj/
+[Bb]in/
+[Hh]elp/
+[Pp]ackages/
+*.user
+*.suo
+*.[Cc]ache
+*.bak
+*.ncb
+*.log 
+[Tt]humbs.db 
+*.[Pp]ublish.xml
+TestResults/
+TestDataWithResults/
