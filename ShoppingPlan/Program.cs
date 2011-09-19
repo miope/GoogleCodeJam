@@ -37,7 +37,7 @@ namespace ShoppingPlan
                         var _shops = new List<Shop>();
                         Enumerable.Range(1, _numOfShops).ToList().ForEach(x => {
                             _parts = _input.ReadLine().Split(' ');
-                            var _aShop = new Shop(x.ToString(), int.Parse(_parts[0]), int.Parse(_parts[1]));
+                            var _aShop = new Shop(string.Format("{0}.{1}", _case, x.ToString()), int.Parse(_parts[0]), int.Parse(_parts[1]));
                             _aShop.Products = _parts.Skip(2).Select(s => {
                                 var _a = s.Split(':');
                                 return _products.GetByName(_a[0]).Clone(double.Parse(_a[1]));
