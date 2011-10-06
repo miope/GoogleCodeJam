@@ -13,6 +13,8 @@ namespace ShoppingPlan
         {
             string _inputFile = args[0];
             string _outputFile = Path.ChangeExtension(_inputFile, "out");
+            IDictionary<string, double> _cache;
+            var _start = DateTime.Now;
 
             using (var _input = new StreamReader(_inputFile))
             {
@@ -47,13 +49,53 @@ namespace ShoppingPlan
                             _locations.Add(_loc);
                         });
 
-                        var _temp = _locations[0].PossiblePurchases(_locations, _gasPrice);
-                        var a = _temp.First();
-                        var b = a.NextPurchases(_locations, _gasPrice);
-
-                        var _minAmount = (double)_temp.Count();
+                        var _firstOne = new Purchase() { Location = _locations.GetHome(), Cost=0.0, IsPerishable=false, Product=null};
+                        _cache = new Dictionary<string, double>();
+                        var _temp = GoShopping(0.0, _firstOne, _locations, _gasPrice, _products.OrderBy(p=> p.Name), _cache);
+                        var _minAmount = _temp.Min();
                         _output.WriteLine(string.Format("Case #{0}: {1}", _case, Math.Round(_minAmount, 7).ToString("F7", new CultureInfo("en-US"))));
+                        //if (_case > 6) break;
+                    }
+                }
+            }
+            Console.WriteLine(string.Format("Duration: {0}", DateTime.Now.Subtract(_start).ToString()));
+            Console.ReadLine();
+        }
 
+        static IEnumerable<double> GoShopping(double spentSoFar, Purchase p, IEnumerable<Location> locations, double gasPrice, IEnumerable<Product> stillToBuy, IDictionary<string, double> memoizer)
+        {
+            if (p.Product != null)
+            { 
+                Console.WriteLine(string.Format("Purchased {0} in {1} for {2} {3}", p.Product.Name, p.Location.Name, p.Cost, p.IsPerishable));
+            }
+
+            spentSoFar += p.Cost;
+
+            if (!stillToBuy.Any())
+            {
+                double _res = spentSoFar + p.Location.DistanceTo(locations.GetHome()) * gasPrice;
+                Console.WriteLine(string.Format("Total: {0}", _res));
+                Enumerable.Range(1, 20).ToList().ForEach(i => Console.Write("-"));
+                Console.WriteLine();
+                yield return _res;
+            }
+            else
+            { 
+                string _errand = string.Format("{0}:{1}", p.Location.Name, stillToBuy.Select(pro => pro.Name).Aggregate((c, n) => c + ";" + n));
+                if (memoizer.ContainsKey(_errand))
+                {
+                    yield return memoizer[_errand];
+                }
+                else
+                { 
+                    foreach(Purchase np in p.NextPurchases(locations, gasPrice, stillToBuy))
+                    {
+                        var _stillOnTheList = stillToBuy.Where(pro => pro.Name != np.Product.Name).OrderBy(pro => pro.Name);
+                        foreach (double x in GoShopping(spentSoFar, np, locations, gasPrice, _stillOnTheList, memoizer))
+                        {
+                            memoizer[_errand] = x;
+                            yield return x;
+                        }
                     }
                 }
             }
@@ -66,8 +108,6 @@ namespace ShoppingPlan
         public int X { get; set; }
         public int Y { get; set; }
         public IEnumerable<Product> Products { get; set; }
-
-        private IEnumerable<Purchase> _purchaseCache;
 
         public  Location(string name, int x, int y)
         {
@@ -92,24 +132,9 @@ namespace ShoppingPlan
             return this.DistanceTo(via) + via.DistanceTo(otherLocation);
         }
 
-        public IEnumerable<Purchase> LocalPurchases(Location comingFrom, double gasPrice)
+        public bool IsSameAs(Location otherLocation)
         {
-            return this.Products.Select(p => new Purchase() { 
-                Location = this,
-                Product = p,
-                IsPersihable = p.IsPerishable,
-                Cost = p.Price + (comingFrom.DistanceTo(this) * gasPrice)
-            });
-        }
-
-        public IEnumerable<Purchase> PossiblePurchases(IEnumerable<Location> locations, double gasPrice)
-        {
-            if (_purchaseCache == null)
-            {
-                _purchaseCache = locations.SelectMany(l => l.LocalPurchases(this, gasPrice));
-            }
-
-            return _purchaseCache;
+            return this.X == otherLocation.X && this.Y == otherLocation.Y;
         }
     }
 
@@ -137,32 +162,35 @@ namespace ShoppingPlan
 
     public class Purchase
     {
-        private IEnumerable<Purchase> _nextPurchases;
-
         public Location Location { get; set; }
         public Product Product { get; set; }
         public double Cost { get; set; }
-        public bool IsPersihable { get; set; }
+        public bool IsPerishable { get; set; }
 
-        public IEnumerable<Purchase> NextPurchases(IEnumerable<Location> locations, double gasPrice)
+        private IEnumerable<Purchase> _purchaseCache { get; set; }
+
+        private IEnumerable<Purchase> AllPossiblePurchases(IEnumerable<Location> locations, double gasPrice)
         {
-            if(_nextPurchases == null)
+            if (_purchaseCache == null)
             {
-                _nextPurchases = Location.PossiblePurchases(locations, gasPrice)
-                                         .Where(p => p.Product.Name != Product.Name);
-
-                _nextPurchases.ToList().ForEach(p => {
-                    p.IsPersihable = this.IsPersihable && p.Location.Name == this.Location.Name;
-                    if(this.IsPersihable && p.Location.Name != this.Location.Name)
-                    {
-                        p.Cost = p.Product.Price + this.Location.DistanceToVia(p.Location, locations.GetHome()); ;
-                    }
-                });
+                _purchaseCache = locations.SelectMany(loc => 
+                    loc.Products.Select(p => new Purchase() {
+                        Location = loc,
+                        Product = p,
+                        IsPerishable = this.IsPerishable & this.Location.IsSameAs(loc) ? true : p.IsPerishable, 
+                        Cost = this.IsPerishable & loc.Name != this.Location.Name ? p.Price + this.Location.DistanceToVia(loc, locations.GetHome()) * gasPrice :
+                                                                                    p.Price + (this.Location.DistanceTo(loc) * gasPrice)
+                    })
+                );
             }
 
-            return _nextPurchases;
+            return _purchaseCache;
         }
 
+        public IEnumerable<Purchase> NextPurchases(IEnumerable<Location> locations, double gasPrice, IEnumerable<Product> stillToBuy)
+        {
+            return AllPossiblePurchases(locations, gasPrice).Where(p => stillToBuy.Select(pr => pr.Name).Contains(p.Product.Name));
+        }
     }
 
     public static class Extensions
@@ -184,7 +212,7 @@ namespace ShoppingPlan
 
         public static Location GetHome(this IEnumerable<Location> locations)
         {
-            return locations.Where(l => l.Name == "home").SingleOrDefault();
+            return locations.Where(loc => loc.IsHome).SingleOrDefault();
         }
     }
 }
