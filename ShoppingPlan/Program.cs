@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.IO;
 using System.Globalization;
+using System.Diagnostics;
 
 namespace ShoppingPlan
 {
@@ -13,7 +14,6 @@ namespace ShoppingPlan
         {
             string _inputFile = args[0];
             string _outputFile = Path.ChangeExtension(_inputFile, "out");
-            IDictionary<string, double> _cache;
             var _start = DateTime.Now;
 
             using (var _input = new StreamReader(_inputFile))
@@ -26,7 +26,7 @@ namespace ShoppingPlan
 
                     while((_line = _input.ReadLine()) != null)
                     {
-                        _case++;
+                        ++_case;
 
                         var _parts = _line.Split(' ');
                         var _numOfProducts = int.Parse(_parts[0]);
@@ -50,11 +50,12 @@ namespace ShoppingPlan
                         });
 
                         var _firstOne = new Purchase() { Location = _locations.GetHome(), Cost=0.0, IsPerishable=false, Product=null};
-                        _cache = new Dictionary<string, double>();
-                        var _temp = GoShopping(0.0, _firstOne, _locations, _gasPrice, _products.OrderBy(p=> p.Name), _cache);
-                        var _minAmount = _temp.Min();
+                        var _memoizer = new Dictionary<string, double>();
+                        Console.WriteLine(string.Format("Calculating Case # {0}...", _case));
+                        var _minAmount = MinCostForAcquiring(_products, _firstOne, _locations, _gasPrice, _memoizer);
+                        Console.WriteLine(string.Format("Done...result={0}", _minAmount));
+                        Console.WriteLine();
                         _output.WriteLine(string.Format("Case #{0}: {1}", _case, Math.Round(_minAmount, 7).ToString("F7", new CultureInfo("en-US"))));
-                        //if (_case > 6) break;
                     }
                 }
             }
@@ -62,43 +63,28 @@ namespace ShoppingPlan
             Console.ReadLine();
         }
 
-        static IEnumerable<double> GoShopping(double spentSoFar, Purchase p, IEnumerable<Location> locations, double gasPrice, IEnumerable<Product> stillToBuy, IDictionary<string, double> memoizer)
+        static double MinCostForAcquiring(IEnumerable<Product> productsToBuy, Purchase startingPoint, IEnumerable<Location> locations, double gasPrice, IDictionary<string, double> memoizer)
         {
-            if (p.Product != null)
-            { 
-                Console.WriteLine(string.Format("Purchased {0} in {1} for {2} {3}", p.Product.Name, p.Location.Name, p.Cost, p.IsPerishable));
-            }
 
-            spentSoFar += p.Cost;
-
-            if (!stillToBuy.Any())
+            if (!productsToBuy.Any())
             {
-                double _res = spentSoFar + p.Location.DistanceTo(locations.GetHome()) * gasPrice;
-                Console.WriteLine(string.Format("Total: {0}", _res));
-                Enumerable.Range(1, 20).ToList().ForEach(i => Console.Write("-"));
-                Console.WriteLine();
-                yield return _res;
+                return startingPoint.Location.DistanceTo(locations.GetHome()) * gasPrice;
             }
-            else
-            { 
-                string _errand = string.Format("{0}:{1}", p.Location.Name, stillToBuy.Select(pro => pro.Name).Aggregate((c, n) => c + ";" + n));
-                if (memoizer.ContainsKey(_errand))
-                {
-                    yield return memoizer[_errand];
-                }
-                else
-                { 
-                    foreach(Purchase np in p.NextPurchases(locations, gasPrice, stillToBuy))
-                    {
-                        var _stillOnTheList = stillToBuy.Where(pro => pro.Name != np.Product.Name).OrderBy(pro => pro.Name);
-                        foreach (double x in GoShopping(spentSoFar, np, locations, gasPrice, _stillOnTheList, memoizer))
-                        {
-                            memoizer[_errand] = x;
-                            yield return x;
-                        }
-                    }
-                }
+
+            string _key = string.Format("{0}:{1}:{2}", startingPoint.Location.Name, startingPoint.IsPerishable.ToString(), productsToBuy.Select(p => p.Name).Aggregate((r, n) => r + ";" + n));
+
+            if (memoizer.ContainsKey(_key))
+            {
+                return memoizer[_key];
             }
+
+            var _result = productsToBuy.SelectMany(p => startingPoint.PossiblePurchasesOf(p, locations, gasPrice)
+                                                                     .Select(pur => pur.Cost + MinCostForAcquiring(productsToBuy.Without(p), 
+                                                                                                                   pur, locations, gasPrice, memoizer)))
+                                       .Min();
+
+            memoizer.Add(_key, _result);
+            return _result;
         }
     }
 
@@ -124,7 +110,7 @@ namespace ShoppingPlan
 
         public double DistanceTo(Location otherLocation)
         {
-            return Math.Sqrt((this.X - otherLocation.X).Squared() + (this.Y - otherLocation.Y).Squared());
+            return Math.Sqrt((this.X - otherLocation.X).Pow2() + (this.Y - otherLocation.Y).Pow2());
         }
 
         public double DistanceToVia(Location otherLocation, Location via)
@@ -187,17 +173,17 @@ namespace ShoppingPlan
             return _purchaseCache;
         }
 
-        public IEnumerable<Purchase> NextPurchases(IEnumerable<Location> locations, double gasPrice, IEnumerable<Product> stillToBuy)
+        public IEnumerable<Purchase> PossiblePurchasesOf(Product product, IEnumerable<Location> locations, double gasPrice)
         {
-            return AllPossiblePurchases(locations, gasPrice).Where(p => stillToBuy.Select(pr => pr.Name).Contains(p.Product.Name));
+            return AllPossiblePurchases(locations, gasPrice).Where(p => p.Product.Name == product.Name);
         }
     }
 
     public static class Extensions
     {
-        public static double Squared(this int num)
+        public static double Pow2(this int num)
         {
-            return Math.Pow((double)num, 2.0);
+            return (double)(num * num);
         }
 
         public static Product GetByName(this IEnumerable<Product> products, string name)
@@ -213,6 +199,11 @@ namespace ShoppingPlan
         public static Location GetHome(this IEnumerable<Location> locations)
         {
             return locations.Where(loc => loc.IsHome).SingleOrDefault();
+        }
+
+        public static IEnumerable<Product> Without(this IEnumerable<Product> products, Product product)
+        {
+            return products.Where(p => p.Name != product.Name);
         }
     }
 }
